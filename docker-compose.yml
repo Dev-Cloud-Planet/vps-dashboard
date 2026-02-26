@@ -3,6 +3,9 @@ services:
     build: ./backend
     container_name: vps-dashboard-api
     restart: unless-stopped
+    networks:
+      - coolify
+      - default
     volumes:
       - dashboard-data:/data
       - /opt/monitor/logs:/opt/monitor/logs:ro
@@ -21,6 +24,17 @@ services:
       - CORS_ORIGINS=https://monitor.devcloudplanet.com,http://localhost:3000
       - BACKFILL_ON_START=true
       - CRITICAL_CONTAINERS=n8n,postgresql,postgres,chatwoot,coolify,coolify-proxy,redis,evolution,wordpress,mariadb,qdrant,beszel
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.vps-dash-api.rule=Host(`monitor-api.devcloudplanet.com`)
+      - traefik.http.routers.vps-dash-api.entrypoints=https
+      - traefik.http.routers.vps-dash-api.tls=true
+      - traefik.http.routers.vps-dash-api.tls.certresolver=letsencrypt
+      - traefik.http.services.vps-dash-api.loadbalancer.server.port=8080
+      - traefik.http.routers.vps-dash-api-http.rule=Host(`monitor-api.devcloudplanet.com`)
+      - traefik.http.routers.vps-dash-api-http.entrypoints=http
+      - traefik.http.routers.vps-dash-api-http.middlewares=redirect-to-https
+      - traefik.http.middlewares.redirect-to-https.redirectscheme.scheme=https
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/api/health"]
       interval: 30s
@@ -35,12 +49,29 @@ services:
         NEXT_PUBLIC_WS_URL: ${PUBLIC_WS_URL:-wss://monitor-api.devcloudplanet.com}
     container_name: vps-dashboard-ui
     restart: unless-stopped
+    networks:
+      - coolify
+      - default
     depends_on:
       backend:
         condition: service_healthy
     environment:
       - NEXT_PUBLIC_API_URL=${PUBLIC_API_URL:-https://monitor-api.devcloudplanet.com}
       - NEXT_PUBLIC_WS_URL=${PUBLIC_WS_URL:-wss://monitor-api.devcloudplanet.com}
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.vps-dash-ui.rule=Host(`monitor.devcloudplanet.com`)
+      - traefik.http.routers.vps-dash-ui.entrypoints=https
+      - traefik.http.routers.vps-dash-ui.tls=true
+      - traefik.http.routers.vps-dash-ui.tls.certresolver=letsencrypt
+      - traefik.http.services.vps-dash-ui.loadbalancer.server.port=3000
+      - traefik.http.routers.vps-dash-ui-http.rule=Host(`monitor.devcloudplanet.com`)
+      - traefik.http.routers.vps-dash-ui-http.entrypoints=http
+      - traefik.http.routers.vps-dash-ui-http.middlewares=redirect-to-https
+
+networks:
+  coolify:
+    external: true
 
 volumes:
   dashboard-data:
