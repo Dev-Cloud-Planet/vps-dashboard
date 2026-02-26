@@ -205,26 +205,35 @@ func (h *ActionsHandler) UnblockIP(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, map[string]string{"status": "unblocked", "ip": ip})
 }
 
-// iptablesBlock blocks an IP using iptables via nsenter into host namespace.
-func (h *ActionsHandler) iptablesBlock(ctx context.Context, ip string) error {
-	cmd := exec.CommandContext(ctx, "nsenter", "-t", "1", "-n", "--",
-		"iptables", "-I", "INPUT", "-s", ip, "-j", "DROP")
+// runIptables runs an iptables command via nsenter into the host network
+// namespace. Falls back to direct iptables if nsenter fails.
+func (h *ActionsHandler) runIptables(ctx context.Context, args ...string) error {
+	// Try nsenter first (requires pid:host + SYS_ADMIN)
+	nsArgs := append([]string{"-t", "1", "-n", "--", "iptables"}, args...)
+	cmd := exec.CommandContext(ctx, "nsenter", nsArgs...)
 	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("iptables block %s: %s: %w", ip, string(output), err)
+	if err == nil {
+		return nil
+	}
+	log.Printf("[actions] nsenter iptables failed (%v: %s), trying direct iptables", err, strings.TrimSpace(string(output)))
+
+	// Fallback: direct iptables (works if network_mode=host or NET_ADMIN in host netns)
+	cmd2 := exec.CommandContext(ctx, "iptables", args...)
+	output2, err2 := cmd2.CombinedOutput()
+	if err2 != nil {
+		return fmt.Errorf("iptables %v: nsenter: %s; direct: %s: %w", args, string(output), string(output2), err2)
 	}
 	return nil
 }
 
+// iptablesBlock blocks an IP using iptables via nsenter into host namespace.
+func (h *ActionsHandler) iptablesBlock(ctx context.Context, ip string) error {
+	return h.runIptables(ctx, "-I", "INPUT", "-s", ip, "-j", "DROP")
+}
+
 // iptablesUnblock removes an IP block.
 func (h *ActionsHandler) iptablesUnblock(ctx context.Context, ip string) error {
-	cmd := exec.CommandContext(ctx, "nsenter", "-t", "1", "-n", "--",
-		"iptables", "-D", "INPUT", "-s", ip, "-j", "DROP")
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("iptables unblock %s: %s: %w", ip, string(output), err)
-	}
-	return nil
+	return h.runIptables(ctx, "-D", "INPUT", "-s", ip, "-j", "DROP")
 }
 
 // ---------------------------------------------------------------------------

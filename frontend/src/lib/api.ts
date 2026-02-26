@@ -52,11 +52,14 @@ async function fetchAPI<T>(
   // Handle other error responses
   if (!response.ok) {
     const body = await response.text();
-    throw new APIError(
-      `API Error: ${response.status} ${response.statusText}`,
-      response.status,
-      body
-    );
+    let message = `API Error: ${response.status} ${response.statusText}`;
+    try {
+      const parsed = JSON.parse(body);
+      if (parsed.error) message = parsed.error;
+    } catch {
+      // body is not JSON, use default message
+    }
+    throw new APIError(message, response.status, body);
   }
 
   // Handle 204 No Content
