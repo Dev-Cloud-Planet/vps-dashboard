@@ -16,6 +16,7 @@ type RouterConfig struct {
 	Hub            *ws.Hub
 	JWTSecret      string
 	AllowedOrigins []string
+	Actions        *ActionsHandler // optional, nil if Docker unavailable
 }
 
 // NewRouter creates and returns a fully configured chi router with all
@@ -86,6 +87,15 @@ func NewRouter(cfg RouterConfig) http.Handler {
 			// Settings.
 			r.Get("/settings", settingsH.Get)
 			r.Put("/settings", settingsH.Update)
+
+			// Container actions + IP management.
+			if cfg.Actions != nil {
+				r.Post("/containers/{id}/start", cfg.Actions.ContainerStart)
+				r.Post("/containers/{id}/stop", cfg.Actions.ContainerStop)
+				r.Post("/containers/{id}/restart", cfg.Actions.ContainerRestart)
+				r.Post("/banned-ips", cfg.Actions.BlockIP)
+				r.Delete("/banned-ips/{ip}", cfg.Actions.UnblockIP)
+			}
 		})
 	})
 

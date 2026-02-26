@@ -7,7 +7,7 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -o server ./cmd/server
 
 FROM alpine:3.19
-RUN apk --no-cache add ca-certificates tzdata
+RUN apk --no-cache add ca-certificates tzdata iptables util-linux
 COPY --from=builder /app/server /usr/local/bin/server
 EXPOSE 8080
 CMD ["server"]

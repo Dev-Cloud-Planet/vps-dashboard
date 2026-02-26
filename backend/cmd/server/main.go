@@ -17,6 +17,7 @@ import (
 	"github.com/Dev-Cloud-Planet/vps-dashboard/backend/internal/collector"
 	"github.com/Dev-Cloud-Planet/vps-dashboard/backend/internal/config"
 	"github.com/Dev-Cloud-Planet/vps-dashboard/backend/internal/database"
+	"github.com/Dev-Cloud-Planet/vps-dashboard/backend/internal/geo"
 	"github.com/Dev-Cloud-Planet/vps-dashboard/backend/internal/logparser"
 	"github.com/Dev-Cloud-Planet/vps-dashboard/backend/internal/ws"
 )
@@ -137,13 +138,41 @@ func main() {
 	}()
 
 	// -----------------------------------------------------------------------
-	// 10. Build and start HTTP server.
+	// 10. Create actions handler (container mgmt + IP blocking + auto-ban).
+	// -----------------------------------------------------------------------
+	geoLocator := geo.NewLocator()
+	var actionsH *api.ActionsHandler
+	actionsH, err = api.NewActionsHandler(db, hub, geoLocator)
+	if err != nil {
+		log.Printf("[main] WARNING: actions handler not available: %v", err)
+	} else {
+		watcher.OnFailedLogin = actionsH.TrackFailedLogin
+
+		// Periodic cleanup of stale failed-attempt entries.
+		go func() {
+			ticker := time.NewTicker(1 * time.Hour)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					actionsH.CleanupOldAttempts()
+				}
+			}
+		}()
+		log.Println("[main] actions handler ready (container mgmt + IP blocking)")
+	}
+
+	// -----------------------------------------------------------------------
+	// 11. Build and start HTTP server.
 	// -----------------------------------------------------------------------
 	router := api.NewRouter(api.RouterConfig{
 		DB:             db,
 		Hub:            hub,
 		JWTSecret:      cfg.JWTSecret,
 		AllowedOrigins: cfg.CORSOrigins,
+		Actions:        actionsH,
 	})
 
 	addr := ":" + cfg.Port

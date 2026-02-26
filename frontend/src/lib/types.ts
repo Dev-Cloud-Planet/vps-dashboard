@@ -140,6 +140,23 @@ export interface MetricsHistoryResponse {
   data: SystemMetrics[];
 }
 
+// Container action response
+export interface ContainerActionResponse {
+  status: string;
+  container_id: string;
+}
+
+// IP blocking
+export interface BlockIPResponse {
+  status: string;
+  ip: BannedIP;
+}
+
+export interface UnblockIPResponse {
+  status: string;
+  ip: string;
+}
+
 // WebSocket message types
 export type WSMessageType =
   | "system_metrics"
@@ -147,7 +164,8 @@ export type WSMessageType =
   | "login_event"
   | "alert"
   | "monitor_event"
-  | "ports";
+  | "ports"
+  | "banned_ip_update";
 
 export interface WSMessage {
   type: WSMessageType;

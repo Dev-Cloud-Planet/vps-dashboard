@@ -1,8 +1,8 @@
 "use client";
 
 import { useState, useMemo } from "react";
-import useSWR from "swr";
-import { swrFetcher } from "@/lib/api";
+import useSWR, { mutate } from "swr";
+import { swrFetcher, startContainer, stopContainer, restartContainer } from "@/lib/api";
 import { useWS } from "@/providers/websocket-provider";
 import { cn, formatRelativeTime } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -23,6 +23,8 @@ import {
   Clock,
   Image as ImageIcon,
   Activity,
+  RotateCcw,
+  Loader2,
 } from "lucide-react";
 import {
   AreaChart,
@@ -40,14 +42,20 @@ import {
 function ContainerDetailModal({
   container,
   onClose,
+  onAction,
+  actionLoading,
 }: {
   container: Container;
   onClose: () => void;
+  onAction: (id: string, action: "start" | "stop" | "restart") => void;
+  actionLoading: string | null;
 }) {
   const { data: metricsData } = useSWR<SystemMetrics[]>(
     `/containers/${container.id}/metrics?range=24h`,
     swrFetcher
   );
+
+  const isUp = container.status === "running" || String(container.status).startsWith("Up");
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -59,23 +67,68 @@ function ContainerDetailModal({
             <div
               className={cn(
                 "h-3 w-3 rounded-full",
-                container.status === "running"
-                  ? "bg-green-500"
-                  : container.status === "exited"
-                    ? "bg-red-500"
-                    : "bg-yellow-500"
+                isUp ? "bg-green-500" : "bg-red-500"
               )}
             />
             <h2 className="text-lg font-bold text-zinc-100">
               {container.name}
             </h2>
           </div>
-          <button
-            onClick={onClose}
-            className="text-zinc-400 hover:text-zinc-100"
-          >
-            <X className="h-5 w-5" />
-          </button>
+          <div className="flex items-center gap-2">
+            {/* Action buttons */}
+            {isUp ? (
+              <>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="text-yellow-400 border-yellow-800 hover:bg-yellow-900/20"
+                  onClick={() => onAction(container.id, "restart")}
+                  disabled={!!actionLoading}
+                >
+                  {actionLoading === `${container.id}-restart` ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <RotateCcw className="h-3.5 w-3.5" />
+                  )}
+                  Restart
+                </Button>
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  onClick={() => onAction(container.id, "stop")}
+                  disabled={!!actionLoading}
+                >
+                  {actionLoading === `${container.id}-stop` ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Square className="h-3.5 w-3.5" />
+                  )}
+                  Stop
+                </Button>
+              </>
+            ) : (
+              <Button
+                size="sm"
+                variant="outline"
+                className="text-green-400 border-green-800 hover:bg-green-900/20"
+                onClick={() => onAction(container.id, "start")}
+                disabled={!!actionLoading}
+              >
+                {actionLoading === `${container.id}-start` ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Play className="h-3.5 w-3.5" />
+                )}
+                Start
+              </Button>
+            )}
+            <button
+              onClick={onClose}
+              className="text-zinc-400 hover:text-zinc-100 ml-2"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          </div>
         </div>
 
         {/* Body */}
@@ -92,13 +145,7 @@ function ContainerDetailModal({
             <div className="space-y-1">
               <p className="text-xs text-zinc-500">Status</p>
               <Badge
-                variant={
-                  container.status === "running"
-                    ? "success"
-                    : container.status === "exited"
-                      ? "destructive"
-                      : "warning"
-                }
+                variant={isUp ? "success" : "destructive"}
               >
                 {container.status}
               </Badge>
@@ -222,6 +269,7 @@ export default function ContainersPage() {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<"all" | "running" | "exited" | "unhealthy">("all");
   const [selectedContainer, setSelectedContainer] = useState<Container | null>(null);
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
 
   // WebSocket data takes priority
   const containers = ws.lastContainers.length > 0 ? ws.lastContainers : apiContainers ?? [];
@@ -233,6 +281,23 @@ export default function ContainersPage() {
   const running = containers.filter((c) => isRunning(c.status)).length;
   const stopped = containers.filter((c) => isExited(c.status)).length;
   const unhealthy = containers.filter((c) => c.health === "unhealthy").length;
+
+  const handleContainerAction = async (id: string, action: "start" | "stop" | "restart") => {
+    if (actionLoading) return;
+    if (!window.confirm(`Are you sure you want to ${action} this container?`)) return;
+
+    setActionLoading(`${id}-${action}`);
+    try {
+      if (action === "start") await startContainer(id);
+      else if (action === "stop") await stopContainer(id);
+      else if (action === "restart") await restartContainer(id);
+      mutate("/containers");
+    } catch (err) {
+      alert(`Failed to ${action} container: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setActionLoading(null);
+    }
+  };
 
   // Filter and search
   const filtered = useMemo(() => {
@@ -370,72 +435,119 @@ export default function ContainersPage() {
                 <th className="hidden px-4 py-3 text-left text-xs font-medium uppercase text-zinc-500 lg:table-cell">
                   Image
                 </th>
+                <th className="px-4 py-3 text-center text-xs font-medium uppercase text-zinc-500">
+                  Actions
+                </th>
               </tr>
             </thead>
             <tbody>
-              {filtered.map((c) => (
-                <tr
-                  key={c.id}
-                  onClick={() => setSelectedContainer(c)}
-                  className="cursor-pointer border-b border-zinc-800/50 transition-colors hover:bg-zinc-800/30"
-                >
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-2">
-                      <div
-                        className={cn(
-                          "h-2 w-2 rounded-full",
-                          c.status === "running"
-                            ? "bg-green-500"
-                            : c.status === "exited"
-                              ? "bg-red-500"
-                              : "bg-yellow-500"
+              {filtered.map((c) => {
+                const up = isRunning(c.status);
+                return (
+                  <tr
+                    key={c.id}
+                    className="border-b border-zinc-800/50 transition-colors hover:bg-zinc-800/30"
+                  >
+                    <td
+                      className="px-4 py-3 cursor-pointer"
+                      onClick={() => setSelectedContainer(c)}
+                    >
+                      <div className="flex items-center gap-2">
+                        <div
+                          className={cn(
+                            "h-2 w-2 rounded-full",
+                            up ? "bg-green-500" : isExited(c.status) ? "bg-red-500" : "bg-yellow-500"
+                          )}
+                        />
+                        <span className="font-medium text-zinc-200">
+                          {c.name}
+                        </span>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <Badge variant={up ? "success" : isExited(c.status) ? "destructive" : "warning"}>
+                        {c.status}
+                      </Badge>
+                    </td>
+                    <td className="px-4 py-3">
+                      <Badge
+                        variant={
+                          c.health === "healthy"
+                            ? "success"
+                            : c.health === "unhealthy"
+                              ? "destructive"
+                              : "secondary"
+                        }
+                      >
+                        {c.health || "none"}
+                      </Badge>
+                    </td>
+                    <td className="px-4 py-3 text-right font-mono text-sm text-zinc-300">
+                      {c.cpu_percent.toFixed(1)}%
+                    </td>
+                    <td className="px-4 py-3 text-right font-mono text-sm text-zinc-300">
+                      {c.mem_percent.toFixed(1)}%
+                    </td>
+                    <td className="hidden px-4 py-3 text-sm text-zinc-400 lg:table-cell">
+                      <span className="max-w-xs truncate block">{c.image}</span>
+                    </td>
+                    <td className="px-4 py-3 text-center">
+                      <div className="flex items-center justify-center gap-1">
+                        {up ? (
+                          <>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7 text-yellow-400 hover:text-yellow-300 hover:bg-yellow-900/20"
+                              onClick={() => handleContainerAction(c.id, "restart")}
+                              disabled={!!actionLoading}
+                              title="Restart"
+                            >
+                              {actionLoading === `${c.id}-restart` ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              ) : (
+                                <RotateCcw className="h-3.5 w-3.5" />
+                              )}
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7 text-red-400 hover:text-red-300 hover:bg-red-900/20"
+                              onClick={() => handleContainerAction(c.id, "stop")}
+                              disabled={!!actionLoading}
+                              title="Stop"
+                            >
+                              {actionLoading === `${c.id}-stop` ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              ) : (
+                                <Square className="h-3.5 w-3.5" />
+                              )}
+                            </Button>
+                          </>
+                        ) : (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 text-green-400 hover:text-green-300 hover:bg-green-900/20"
+                            onClick={() => handleContainerAction(c.id, "start")}
+                            disabled={!!actionLoading}
+                            title="Start"
+                          >
+                            {actionLoading === `${c.id}-start` ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <Play className="h-3.5 w-3.5" />
+                            )}
+                          </Button>
                         )}
-                      />
-                      <span className="font-medium text-zinc-200">
-                        {c.name}
-                      </span>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3">
-                    <Badge
-                      variant={
-                        c.status === "running"
-                          ? "success"
-                          : c.status === "exited"
-                            ? "destructive"
-                            : "warning"
-                      }
-                    >
-                      {c.status}
-                    </Badge>
-                  </td>
-                  <td className="px-4 py-3">
-                    <Badge
-                      variant={
-                        c.health === "healthy"
-                          ? "success"
-                          : c.health === "unhealthy"
-                            ? "destructive"
-                            : "secondary"
-                      }
-                    >
-                      {c.health || "none"}
-                    </Badge>
-                  </td>
-                  <td className="px-4 py-3 text-right font-mono text-sm text-zinc-300">
-                    {c.cpu_percent.toFixed(1)}%
-                  </td>
-                  <td className="px-4 py-3 text-right font-mono text-sm text-zinc-300">
-                    {c.mem_percent.toFixed(1)}%
-                  </td>
-                  <td className="hidden px-4 py-3 text-sm text-zinc-400 lg:table-cell">
-                    <span className="max-w-xs truncate block">{c.image}</span>
-                  </td>
-                </tr>
-              ))}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
               {filtered.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="px-4 py-12 text-center text-zinc-500">
+                  <td colSpan={7} className="px-4 py-12 text-center text-zinc-500">
                     No containers found
                   </td>
                 </tr>
@@ -450,6 +562,8 @@ export default function ContainersPage() {
         <ContainerDetailModal
           container={selectedContainer}
           onClose={() => setSelectedContainer(null)}
+          onAction={handleContainerAction}
+          actionLoading={actionLoading}
         />
       )}
     </div>

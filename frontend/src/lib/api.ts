@@ -108,5 +108,27 @@ export function swrFetcher<T>(url: string): Promise<T> {
   return get<T>(url);
 }
 
+// Container actions
+export function startContainer(id: string) {
+  return post<{ status: string; container_id: string }>(`/containers/${id}/start`);
+}
+
+export function stopContainer(id: string) {
+  return post<{ status: string; container_id: string }>(`/containers/${id}/stop`);
+}
+
+export function restartContainer(id: string) {
+  return post<{ status: string; container_id: string }>(`/containers/${id}/restart`);
+}
+
+// IP management
+export function blockIP(ip: string, reason?: string) {
+  return post<{ status: string; ip: unknown }>("/banned-ips", { ip, reason });
+}
+
+export function unblockIP(ip: string) {
+  return del<{ status: string; ip: string }>(`/banned-ips/${encodeURIComponent(ip)}`);
+}
+
 export { fetchAPI };
 export default { get, post, put, del, fetchAPI };

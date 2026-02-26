@@ -34,9 +34,10 @@ func DefaultLogPaths() LogPaths {
 // Watcher tails log files, parses each line and stores the resulting events
 // in the database while broadcasting them over WebSocket.
 type Watcher struct {
-	db    *sql.DB
-	hub   *ws.Hub
-	paths LogPaths
+	db            *sql.DB
+	hub           *ws.Hub
+	paths         LogPaths
+	OnFailedLogin func(ip string) // called on LOGIN_FAIL events for auto-ban
 }
 
 // NewWatcher creates a new Watcher.
@@ -211,6 +212,11 @@ func (w *Watcher) handleLoginEvent(evt models.Login) {
 		Type: "login_event",
 		Data: evt,
 	})
+
+	// Track failed logins for auto-ban.
+	if evt.EventType == "LOGIN_FAIL" && evt.IP != "" && w.OnFailedLogin != nil {
+		w.OnFailedLogin(evt.IP)
+	}
 }
 
 // handleAlertEvent persists an alert event and broadcasts it.

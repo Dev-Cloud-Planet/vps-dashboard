@@ -32,6 +32,7 @@ interface WSContextValue {
   recentLogins: LoginEvent[];
   recentAlerts: AlertEvent[];
   lastPorts: PortStatus[];
+  bannedIPsVersion: number;
 }
 
 const WSContext = createContext<WSContextValue | undefined>(undefined);
@@ -43,6 +44,7 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
   const [recentLogins, setRecentLogins] = useState<LoginEvent[]>([]);
   const [recentAlerts, setRecentAlerts] = useState<AlertEvent[]>([]);
   const [lastPorts, setLastPorts] = useState<PortStatus[]>([]);
+  const [bannedIPsVersion, setBannedIPsVersion] = useState(0);
 
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectDelayRef = useRef(INITIAL_RECONNECT_DELAY);
@@ -93,6 +95,10 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
 
         case "ports":
           setLastPorts(msg.data as PortStatus[]);
+          break;
+
+        case "banned_ip_update":
+          setBannedIPsVersion((v) => v + 1);
           break;
       }
     } catch (err) {
@@ -195,6 +201,7 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
         recentLogins,
         recentAlerts,
         lastPorts,
+        bannedIPsVersion,
       }}
     >
       {children}

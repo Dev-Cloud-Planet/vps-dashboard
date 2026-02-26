@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import useSWR from "swr";
-import { swrFetcher } from "@/lib/api";
+import { swrFetcher, blockIP as apiBlockIP, unblockIP as apiUnblockIP } from "@/lib/api";
 import { useWS } from "@/providers/websocket-provider";
 import { cn, formatDate, formatRelativeTime } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -23,6 +23,11 @@ import {
   BarChart3,
   ChevronLeft,
   ChevronRight,
+  Plus,
+  X,
+  Loader2,
+  ShieldOff,
+  ShieldBan,
 } from "lucide-react";
 import {
   BarChart,
@@ -257,12 +262,27 @@ function LoginTimeline() {
 // Tab: Banned IPs
 // -------------------------------------------------------------------
 function BannedIPsTab() {
-  const { data: bannedResp, isLoading } = useSWR<{ data: BannedIP[]; total: number }>(
+  const ws = useWS();
+  const { data: bannedResp, isLoading, mutate } = useSWR<{ data: BannedIP[]; total: number }>(
     "/banned-ips",
     swrFetcher,
     { refreshInterval: 60000 }
   );
   const bannedIPs = bannedResp?.data;
+
+  // Re-fetch when WS notifies of banned IP changes
+  useEffect(() => {
+    if (ws.bannedIPsVersion > 0) {
+      mutate();
+    }
+  }, [ws.bannedIPsVersion, mutate]);
+
+  // Block IP modal state
+  const [showBlockModal, setShowBlockModal] = useState(false);
+  const [newIP, setNewIP] = useState("");
+  const [blockReason, setBlockReason] = useState("");
+  const [blocking, setBlocking] = useState(false);
+  const [unblockingIP, setUnblockingIP] = useState<string | null>(null);
 
   // Sort by banned_at desc
   const sorted = useMemo(() => {
@@ -272,81 +292,213 @@ function BannedIPsTab() {
     );
   }, [bannedIPs]);
 
+  async function handleBlockIP() {
+    if (!newIP.trim()) return;
+    setBlocking(true);
+    try {
+      await apiBlockIP(newIP.trim(), blockReason.trim() || undefined);
+      setShowBlockModal(false);
+      setNewIP("");
+      setBlockReason("");
+      mutate();
+    } catch (err) {
+      alert(`Failed to block IP: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setBlocking(false);
+    }
+  }
+
+  async function handleUnblockIP(ip: string) {
+    if (!confirm(`Unblock ${ip}? This will remove the iptables rule.`)) return;
+    setUnblockingIP(ip);
+    try {
+      await apiUnblockIP(ip);
+      mutate();
+    } catch (err) {
+      alert(`Failed to unblock IP: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setUnblockingIP(null);
+    }
+  }
+
   if (isLoading) {
     return <Skeleton className="h-96 rounded-xl" />;
   }
 
   return (
-    <Card>
-      <div className="overflow-x-auto">
-        <table className="w-full">
-          <thead>
-            <tr className="border-b border-zinc-800">
-              <th className="px-4 py-3 text-left text-xs font-medium uppercase text-zinc-500">
-                IP Address
-              </th>
-              <th className="px-4 py-3 text-left text-xs font-medium uppercase text-zinc-500">
-                Country
-              </th>
-              <th className="hidden px-4 py-3 text-left text-xs font-medium uppercase text-zinc-500 md:table-cell">
-                City
-              </th>
-              <th className="hidden px-4 py-3 text-left text-xs font-medium uppercase text-zinc-500 lg:table-cell">
-                ISP
-              </th>
-              <th className="px-4 py-3 text-left text-xs font-medium uppercase text-zinc-500">
-                Jail
-              </th>
-              <th className="px-4 py-3 text-left text-xs font-medium uppercase text-zinc-500">
-                Banned At
-              </th>
-              <th className="px-4 py-3 text-left text-xs font-medium uppercase text-zinc-500">
-                Status
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {sorted.map((ip) => (
-              <tr
-                key={`${ip.ip}-${ip.jail}-${ip.banned_at}`}
-                className="border-b border-zinc-800/50"
+    <>
+      <Card>
+        {/* Header with Block IP button */}
+        <div className="flex items-center justify-between border-b border-zinc-800 px-4 py-3">
+          <span className="text-sm text-zinc-400">
+            {sorted.length} banned IP{sorted.length !== 1 ? "s" : ""}
+          </span>
+          <Button size="sm" onClick={() => setShowBlockModal(true)}>
+            <Plus className="mr-1 h-4 w-4" />
+            Block IP
+          </Button>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead>
+              <tr className="border-b border-zinc-800">
+                <th className="px-4 py-3 text-left text-xs font-medium uppercase text-zinc-500">
+                  IP Address
+                </th>
+                <th className="px-4 py-3 text-left text-xs font-medium uppercase text-zinc-500">
+                  Country
+                </th>
+                <th className="hidden px-4 py-3 text-left text-xs font-medium uppercase text-zinc-500 md:table-cell">
+                  City
+                </th>
+                <th className="hidden px-4 py-3 text-left text-xs font-medium uppercase text-zinc-500 lg:table-cell">
+                  ISP
+                </th>
+                <th className="px-4 py-3 text-left text-xs font-medium uppercase text-zinc-500">
+                  Jail
+                </th>
+                <th className="px-4 py-3 text-left text-xs font-medium uppercase text-zinc-500">
+                  Banned At
+                </th>
+                <th className="px-4 py-3 text-left text-xs font-medium uppercase text-zinc-500">
+                  Status
+                </th>
+                <th className="px-4 py-3 text-right text-xs font-medium uppercase text-zinc-500">
+                  Actions
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {sorted.map((ip) => (
+                <tr
+                  key={`${ip.ip}-${ip.jail}-${ip.banned_at}`}
+                  className="border-b border-zinc-800/50"
+                >
+                  <td className="px-4 py-3 font-mono text-sm text-zinc-200">
+                    {ip.ip}
+                  </td>
+                  <td className="px-4 py-3 text-sm text-zinc-300">
+                    {countryFlag(ip.country)} {ip.country}
+                  </td>
+                  <td className="hidden px-4 py-3 text-sm text-zinc-400 md:table-cell">
+                    {ip.city || "-"}
+                  </td>
+                  <td className="hidden px-4 py-3 text-sm text-zinc-400 lg:table-cell">
+                    <span className="max-w-[200px] truncate block">{ip.isp || "-"}</span>
+                  </td>
+                  <td className="px-4 py-3">
+                    <Badge variant="outline">{ip.jail}</Badge>
+                  </td>
+                  <td className="px-4 py-3 text-xs text-zinc-400">
+                    {formatDate(ip.banned_at)}
+                  </td>
+                  <td className="px-4 py-3">
+                    <Badge variant={ip.is_active ? "destructive" : "secondary"}>
+                      {ip.is_active ? "Active" : "Expired"}
+                    </Badge>
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    {ip.is_active && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 text-red-400 hover:text-red-300 hover:bg-red-950/30"
+                        disabled={unblockingIP === ip.ip}
+                        onClick={() => handleUnblockIP(ip.ip)}
+                      >
+                        {unblockingIP === ip.ip ? (
+                          <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                        ) : (
+                          <ShieldOff className="mr-1 h-3 w-3" />
+                        )}
+                        Unblock
+                      </Button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+              {sorted.length === 0 && (
+                <tr>
+                  <td colSpan={8} className="px-4 py-12 text-center text-zinc-500">
+                    No banned IPs found
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+
+      {/* Block IP Modal */}
+      {showBlockModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-xl border border-zinc-800 bg-zinc-950 p-6 shadow-2xl">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-zinc-100">Block IP Address</h3>
+              <button
+                onClick={() => setShowBlockModal(false)}
+                className="text-zinc-400 hover:text-zinc-200"
               >
-                <td className="px-4 py-3 font-mono text-sm text-zinc-200">
-                  {ip.ip}
-                </td>
-                <td className="px-4 py-3 text-sm text-zinc-300">
-                  {countryFlag(ip.country)} {ip.country}
-                </td>
-                <td className="hidden px-4 py-3 text-sm text-zinc-400 md:table-cell">
-                  {ip.city || "-"}
-                </td>
-                <td className="hidden px-4 py-3 text-sm text-zinc-400 lg:table-cell">
-                  <span className="max-w-[200px] truncate block">{ip.isp || "-"}</span>
-                </td>
-                <td className="px-4 py-3">
-                  <Badge variant="outline">{ip.jail}</Badge>
-                </td>
-                <td className="px-4 py-3 text-xs text-zinc-400">
-                  {formatDate(ip.banned_at)}
-                </td>
-                <td className="px-4 py-3">
-                  <Badge variant={ip.is_active ? "destructive" : "secondary"}>
-                    {ip.is_active ? "Active" : "Expired"}
-                  </Badge>
-                </td>
-              </tr>
-            ))}
-            {sorted.length === 0 && (
-              <tr>
-                <td colSpan={7} className="px-4 py-12 text-center text-zinc-500">
-                  No banned IPs found
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-    </Card>
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-zinc-300 mb-1">
+                  IP Address
+                </label>
+                <input
+                  type="text"
+                  value={newIP}
+                  onChange={(e) => setNewIP(e.target.value)}
+                  placeholder="e.g. 192.168.1.100"
+                  className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  onKeyDown={(e) => e.key === "Enter" && handleBlockIP()}
+                  autoFocus
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-zinc-300 mb-1">
+                  Reason <span className="text-zinc-500">(optional)</span>
+                </label>
+                <input
+                  type="text"
+                  value={blockReason}
+                  onChange={(e) => setBlockReason(e.target.value)}
+                  placeholder="e.g. Brute force attack"
+                  className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  onKeyDown={(e) => e.key === "Enter" && handleBlockIP()}
+                />
+              </div>
+              <div className="flex gap-2 justify-end pt-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setShowBlockModal(false)}
+                  disabled={blocking}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={handleBlockIP}
+                  disabled={blocking || !newIP.trim()}
+                  className="bg-red-600 hover:bg-red-700"
+                >
+                  {blocking ? (
+                    <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                  ) : (
+                    <ShieldBan className="mr-1 h-4 w-4" />
+                  )}
+                  Block
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 
@@ -359,6 +511,19 @@ function StatsTab() {
     swrFetcher,
     { refreshInterval: 60000 }
   );
+  const [blockingIP, setBlockingIP] = useState<string | null>(null);
+
+  async function handleQuickBlock(ip: string) {
+    if (!confirm(`Block ${ip}? This will add an iptables DROP rule.`)) return;
+    setBlockingIP(ip);
+    try {
+      await apiBlockIP(ip, "Blocked from dashboard - top attacker");
+    } catch (err) {
+      alert(`Failed to block IP: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setBlockingIP(null);
+    }
+  }
 
   if (isLoading || !stats) {
     return (
@@ -518,6 +683,9 @@ function StatsTab() {
                   <th className="px-4 py-2 text-right text-xs font-medium uppercase text-zinc-500">
                     Attempts
                   </th>
+                  <th className="px-4 py-2 text-right text-xs font-medium uppercase text-zinc-500">
+                    Actions
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -538,11 +706,27 @@ function StatsTab() {
                     <td className="px-4 py-2 text-right">
                       <Badge variant="destructive">{item.count}</Badge>
                     </td>
+                    <td className="px-4 py-2 text-right">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 text-red-400 hover:text-red-300 hover:bg-red-950/30"
+                        disabled={blockingIP === item.ip}
+                        onClick={() => handleQuickBlock(item.ip)}
+                      >
+                        {blockingIP === item.ip ? (
+                          <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                        ) : (
+                          <ShieldBan className="mr-1 h-3 w-3" />
+                        )}
+                        Block
+                      </Button>
+                    </td>
                   </tr>
                 ))}
                 {(!stats.top_attacking_ips || stats.top_attacking_ips.length === 0) && (
                   <tr>
-                    <td colSpan={4} className="px-4 py-8 text-center text-zinc-500">
+                    <td colSpan={5} className="px-4 py-8 text-center text-zinc-500">
                       No data available
                     </td>
                   </tr>
