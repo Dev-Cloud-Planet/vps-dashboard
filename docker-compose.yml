@@ -26,6 +26,7 @@ services:
       - CRITICAL_CONTAINERS=n8n,postgresql,postgres,chatwoot,coolify,coolify-proxy,redis,evolution,wordpress,mariadb,qdrant,beszel
     labels:
       - traefik.enable=true
+      - traefik.docker.network=coolify
       - traefik.http.routers.vps-dash-api.rule=Host(`monitor-api.devcloudplanet.com`)
       - traefik.http.routers.vps-dash-api.entrypoints=https
       - traefik.http.routers.vps-dash-api.tls=true
@@ -60,6 +61,7 @@ services:
       - NEXT_PUBLIC_WS_URL=${PUBLIC_WS_URL:-wss://monitor-api.devcloudplanet.com}
     labels:
       - traefik.enable=true
+      - traefik.docker.network=coolify
       - traefik.http.routers.vps-dash-ui.rule=Host(`monitor.devcloudplanet.com`)
       - traefik.http.routers.vps-dash-ui.entrypoints=https
       - traefik.http.routers.vps-dash-ui.tls=true
