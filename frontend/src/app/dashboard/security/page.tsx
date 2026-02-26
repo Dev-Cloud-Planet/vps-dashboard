@@ -257,11 +257,12 @@ function LoginTimeline() {
 // Tab: Banned IPs
 // -------------------------------------------------------------------
 function BannedIPsTab() {
-  const { data: bannedIPs, isLoading } = useSWR<BannedIP[]>(
+  const { data: bannedResp, isLoading } = useSWR<{ data: BannedIP[]; total: number }>(
     "/banned-ips",
     swrFetcher,
     { refreshInterval: 60000 }
   );
+  const bannedIPs = bannedResp?.data;
 
   // Sort by banned_at desc
   const sorted = useMemo(() => {
@@ -369,20 +370,21 @@ function StatsTab() {
     );
   }
 
-  // Pie chart data from by_type
-  const successCount = stats.success || 0;
-  const failedCount = stats.failed || 0;
+  // Pie chart data from count_by_type
+  const successCount = stats.count_by_type?.["LOGIN_OK"] || 0;
+  const failedCount = stats.count_by_type?.["LOGIN_FAIL"] || 0;
+  const totalCount = Object.values(stats.count_by_type || {}).reduce((a, b) => a + b, 0);
   const pieData = [
     { name: "Success", value: successCount },
     { name: "Failed", value: failedCount },
   ];
   const PIE_COLORS = ["#22c55e", "#ef4444"];
 
-  // Bar chart: by_type breakdown
-  const barData = stats.by_type?.map((item) => ({
-    type: item.type.replace(/_/g, " "),
-    count: item.count,
-  })) ?? [];
+  // Bar chart: count_by_type breakdown
+  const barData = Object.entries(stats.count_by_type || {}).map(([type, count]) => ({
+    type: type.replace(/_/g, " "),
+    count,
+  }));
 
   return (
     <div className="space-y-4">
@@ -390,26 +392,26 @@ function StatsTab() {
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <Card>
           <CardContent className="p-4 text-center">
-            <p className="text-3xl font-bold text-zinc-100">{stats.total}</p>
+            <p className="text-3xl font-bold text-zinc-100">{totalCount}</p>
             <p className="text-xs text-zinc-400">Total Events</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="p-4 text-center">
-            <p className="text-3xl font-bold text-green-400">{stats.success}</p>
+            <p className="text-3xl font-bold text-green-400">{successCount}</p>
             <p className="text-xs text-zinc-400">Successful</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="p-4 text-center">
-            <p className="text-3xl font-bold text-red-400">{stats.failed}</p>
+            <p className="text-3xl font-bold text-red-400">{failedCount}</p>
             <p className="text-xs text-zinc-400">Failed</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="p-4 text-center">
-            <p className="text-3xl font-bold text-blue-400">{stats.unique_ips}</p>
-            <p className="text-xs text-zinc-400">Unique IPs</p>
+            <p className="text-3xl font-bold text-blue-400">{stats.today_count}</p>
+            <p className="text-xs text-zinc-400">Today</p>
           </CardContent>
         </Card>
       </div>
@@ -519,7 +521,7 @@ function StatsTab() {
                 </tr>
               </thead>
               <tbody>
-                {(stats.top_ips ?? []).slice(0, 10).map((item, i) => (
+                {(stats.top_attacking_ips ?? []).slice(0, 10).map((item, i) => (
                   <tr
                     key={item.ip}
                     className="border-b border-zinc-800/50"
@@ -538,7 +540,7 @@ function StatsTab() {
                     </td>
                   </tr>
                 ))}
-                {(!stats.top_ips || stats.top_ips.length === 0) && (
+                {(!stats.top_attacking_ips || stats.top_attacking_ips.length === 0) && (
                   <tr>
                     <td colSpan={4} className="px-4 py-8 text-center text-zinc-500">
                       No data available

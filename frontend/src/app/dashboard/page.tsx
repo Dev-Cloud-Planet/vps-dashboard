@@ -193,15 +193,31 @@ export default function DashboardOverview() {
     { refreshInterval: 30000 }
   );
 
-  // Use WebSocket data when available, fall back to SWR
-  const metrics: SystemMetrics | null = ws.lastMetrics || overview?.metrics || null;
+  // Use WebSocket data when available, fall back to SWR overview
+  const overviewMetrics: SystemMetrics | null = overview
+    ? {
+        timestamp: new Date().toISOString(),
+        cpu_percent: overview.cpu_percent,
+        ram_percent: overview.memory_percent,
+        ram_used_mb: 0,
+        ram_total_mb: 0,
+        disk_percent: overview.disk_percent,
+        disk_used_gb: 0,
+        disk_total_gb: 0,
+        swap_percent: 0,
+        load_1m: overview.load_avg_1,
+        load_5m: overview.load_avg_5,
+        load_15m: overview.load_avg_15,
+      }
+    : null;
+  const metrics: SystemMetrics | null = ws.lastMetrics || overviewMetrics;
   const containers: Container[] = ws.lastContainers.length > 0 ? ws.lastContainers : [];
   const recentAlerts: AlertEvent[] = ws.recentAlerts;
   const recentLogins: LoginEvent[] = ws.recentLogins;
 
   const containersRunning =
     containers.length > 0
-      ? containers.filter((c) => c.status === "running").length
+      ? containers.filter((c) => c.status === "running" || c.status.startsWith("Up")).length
       : overview?.containers_running ?? 0;
   const containersTotal =
     containers.length > 0 ? containers.length : overview?.containers_total ?? 0;
@@ -303,9 +319,9 @@ export default function DashboardOverview() {
                     <div
                       className={cn(
                         "h-2.5 w-2.5 rounded-full",
-                        c.status === "running"
+                        c.status === "running" || c.status.startsWith("Up")
                           ? "bg-green-500"
-                          : c.status === "exited"
+                          : c.status === "exited" || c.status.startsWith("Exited")
                             ? "bg-red-500"
                             : "bg-yellow-500"
                       )}

@@ -212,11 +212,12 @@ function ContainerDetailModal({
 // -------------------------------------------------------------------
 export default function ContainersPage() {
   const ws = useWS();
-  const { data: apiContainers, isLoading } = useSWR<Container[]>(
+  const { data: apiResp, isLoading } = useSWR<{ data: Container[]; total: number }>(
     "/containers",
     swrFetcher,
     { refreshInterval: 15000 }
   );
+  const apiContainers = apiResp?.data;
 
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<"all" | "running" | "exited" | "unhealthy">("all");
@@ -227,16 +228,18 @@ export default function ContainersPage() {
 
   // Summary counts
   const total = containers.length;
-  const running = containers.filter((c) => c.status === "running").length;
-  const stopped = containers.filter((c) => c.status === "exited").length;
+  const isRunning = (s: string) => s === "running" || s.startsWith("Up");
+  const isExited = (s: string) => s === "exited" || s.startsWith("Exited");
+  const running = containers.filter((c) => isRunning(c.status)).length;
+  const stopped = containers.filter((c) => isExited(c.status)).length;
   const unhealthy = containers.filter((c) => c.health === "unhealthy").length;
 
   // Filter and search
   const filtered = useMemo(() => {
     let result = containers;
 
-    if (filter === "running") result = result.filter((c) => c.status === "running");
-    else if (filter === "exited") result = result.filter((c) => c.status === "exited");
+    if (filter === "running") result = result.filter((c) => isRunning(c.status));
+    else if (filter === "exited") result = result.filter((c) => isExited(c.status));
     else if (filter === "unhealthy") result = result.filter((c) => c.health === "unhealthy");
 
     if (search.trim()) {

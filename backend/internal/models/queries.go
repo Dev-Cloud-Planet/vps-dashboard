@@ -7,51 +7,6 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// SystemMetric is the metrics type used by the system_metrics table.
-// The system collector and database.InsertSystemMetric use this type.
-// ---------------------------------------------------------------------------
-
-// SystemMetric holds a point-in-time snapshot of system resource usage,
-// stored in the system_metrics table.
-type SystemMetric struct {
-	ID            int64     `json:"id,omitempty"`
-	CPUPercent    float64   `json:"cpu_percent"`
-	MemoryPercent float64   `json:"memory_percent"`
-	MemoryUsedMB  float64   `json:"memory_used_mb"`
-	MemoryTotalMB float64   `json:"memory_total_mb"`
-	DiskPercent   float64   `json:"disk_percent"`
-	DiskUsedGB    float64   `json:"disk_used_gb"`
-	DiskTotalGB   float64   `json:"disk_total_gb"`
-	LoadAvg1      float64   `json:"load_avg_1"`
-	LoadAvg5      float64   `json:"load_avg_5"`
-	LoadAvg15     float64   `json:"load_avg_15"`
-	NetInBytes    int64     `json:"net_in_bytes"`
-	NetOutBytes   int64     `json:"net_out_bytes"`
-	CreatedAt     time.Time `json:"created_at"`
-}
-
-// LoginEvent is the type used by the login_events table.
-type LoginEvent struct {
-	ID        int64     `json:"id,omitempty"`
-	EventType string    `json:"event_type"`
-	Username  string    `json:"username"`
-	IP        string    `json:"ip"`
-	Port      int       `json:"port"`
-	Method    string    `json:"method"`
-	Country   string    `json:"country"`
-	City      string    `json:"city"`
-	CreatedAt time.Time `json:"created_at"`
-}
-
-// PortCheck represents the result of a TCP port availability check.
-type PortCheck struct {
-	Port      int       `json:"port"`
-	Service   string    `json:"service"`
-	IsOpen    bool      `json:"is_open"`
-	CheckedAt time.Time `json:"checked_at"`
-}
-
-// ---------------------------------------------------------------------------
 // Overview is the response type for the GET /api/overview endpoint.
 // ---------------------------------------------------------------------------
 
@@ -73,190 +28,8 @@ type Overview struct {
 }
 
 // ---------------------------------------------------------------------------
-// System metric queries for the API layer.
+// Container state counts.
 // ---------------------------------------------------------------------------
-
-// GetLatestSystemMetric returns the most recent row from system_metrics.
-func GetLatestSystemMetric(db *sql.DB) (*SystemMetric, error) {
-	m := &SystemMetric{}
-	err := db.QueryRow(`
-		SELECT id, cpu_percent, memory_percent, memory_used_mb, memory_total_mb,
-		       disk_percent, disk_used_gb, disk_total_gb,
-		       load_avg_1, load_avg_5, load_avg_15,
-		       net_in_bytes, net_out_bytes, created_at
-		FROM system_metrics ORDER BY created_at DESC LIMIT 1`,
-	).Scan(
-		&m.ID, &m.CPUPercent, &m.MemoryPercent, &m.MemoryUsedMB, &m.MemoryTotalMB,
-		&m.DiskPercent, &m.DiskUsedGB, &m.DiskTotalGB,
-		&m.LoadAvg1, &m.LoadAvg5, &m.LoadAvg15,
-		&m.NetInBytes, &m.NetOutBytes, &m.CreatedAt,
-	)
-	if err == sql.ErrNoRows {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("get latest system metric: %w", err)
-	}
-	return m, nil
-}
-
-// GetSystemMetricsRange returns metrics between from and to, downsampled to
-// at most maxPoints by averaging values within equal-sized time buckets.
-func GetSystemMetricsRange(db *sql.DB, from, to time.Time, maxPoints int) ([]SystemMetric, error) {
-	if maxPoints <= 0 {
-		maxPoints = 500
-	}
-
-	var total int
-	if err := db.QueryRow(
-		`SELECT COUNT(*) FROM system_metrics WHERE created_at BETWEEN ? AND ?`,
-		from.UTC(), to.UTC(),
-	).Scan(&total); err != nil {
-		return nil, err
-	}
-
-	if total <= maxPoints {
-		return querySystemMetricsRaw(db, from, to)
-	}
-
-	return querySystemMetricsDownsampled(db, from, to, maxPoints)
-}
-
-func querySystemMetricsRaw(db *sql.DB, from, to time.Time) ([]SystemMetric, error) {
-	rows, err := db.Query(`
-		SELECT id, cpu_percent, memory_percent, memory_used_mb, memory_total_mb,
-		       disk_percent, disk_used_gb, disk_total_gb,
-		       load_avg_1, load_avg_5, load_avg_15,
-		       net_in_bytes, net_out_bytes, created_at
-		FROM system_metrics
-		WHERE created_at BETWEEN ? AND ?
-		ORDER BY created_at ASC`,
-		from.UTC(), to.UTC())
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	return scanSystemMetrics(rows)
-}
-
-func querySystemMetricsDownsampled(db *sql.DB, from, to time.Time, maxPoints int) ([]SystemMetric, error) {
-	rangeSec := to.Sub(from).Seconds()
-	bucketSec := int(rangeSec) / maxPoints
-	if bucketSec < 1 {
-		bucketSec = 1
-	}
-
-	q := fmt.Sprintf(`
-		SELECT 0 AS id,
-		       AVG(cpu_percent), AVG(memory_percent),
-		       AVG(memory_used_mb), AVG(memory_total_mb),
-		       AVG(disk_percent), AVG(disk_used_gb), AVG(disk_total_gb),
-		       AVG(load_avg_1), AVG(load_avg_5), AVG(load_avg_15),
-		       CAST(AVG(net_in_bytes) AS INTEGER),
-		       CAST(AVG(net_out_bytes) AS INTEGER),
-		       datetime((strftime('%%%%s', created_at) / %d) * %d, 'unixepoch') AS bucket
-		FROM system_metrics
-		WHERE created_at BETWEEN ? AND ?
-		GROUP BY strftime('%%%%s', created_at) / %d
-		ORDER BY bucket ASC`, bucketSec, bucketSec, bucketSec)
-
-	rows, err := db.Query(q, from.UTC(), to.UTC())
-	if err != nil {
-		return nil, fmt.Errorf("query system metrics downsampled: %w", err)
-	}
-	defer rows.Close()
-	return scanSystemMetrics(rows)
-}
-
-func scanSystemMetrics(rows *sql.Rows) ([]SystemMetric, error) {
-	var out []SystemMetric
-	for rows.Next() {
-		var m SystemMetric
-		if err := rows.Scan(
-			&m.ID, &m.CPUPercent, &m.MemoryPercent, &m.MemoryUsedMB, &m.MemoryTotalMB,
-			&m.DiskPercent, &m.DiskUsedGB, &m.DiskTotalGB,
-			&m.LoadAvg1, &m.LoadAvg5, &m.LoadAvg15,
-			&m.NetInBytes, &m.NetOutBytes, &m.CreatedAt,
-		); err != nil {
-			return nil, fmt.Errorf("scan system metric: %w", err)
-		}
-		out = append(out, m)
-	}
-	return out, rows.Err()
-}
-
-// ---------------------------------------------------------------------------
-// Container types and queries for the API layer.
-// ---------------------------------------------------------------------------
-
-// ContainerInfo represents a container from the containers table.
-type ContainerInfo struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	Image     string    `json:"image"`
-	Status    string    `json:"status"`
-	State     string    `json:"state"`
-	Health    string    `json:"health"`
-	Ports     string    `json:"ports"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-}
-
-// ListContainerInfos returns containers with optional status and search filters.
-func ListContainerInfos(db *sql.DB, status, search string) ([]ContainerInfo, error) {
-	q := `SELECT id, name, image, status, COALESCE(state,'') as state, health,
-	             COALESCE(ports,'') as ports, COALESCE(created_at, datetime('now')) as created_at,
-	             COALESCE(last_updated, datetime('now')) as updated_at
-	      FROM containers WHERE 1=1`
-	args := []interface{}{}
-
-	if status != "" {
-		q += ` AND (status LIKE ? OR LOWER(status) LIKE ?)`
-		args = append(args, "%"+status+"%", "%"+status+"%")
-	}
-	if search != "" {
-		q += ` AND (name LIKE ? OR image LIKE ?)`
-		s := "%" + search + "%"
-		args = append(args, s, s)
-	}
-	q += ` ORDER BY name ASC`
-
-	rows, err := db.Query(q, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var out []ContainerInfo
-	for rows.Next() {
-		var c ContainerInfo
-		if err := rows.Scan(&c.ID, &c.Name, &c.Image, &c.Status, &c.State,
-			&c.Health, &c.Ports, &c.CreatedAt, &c.UpdatedAt); err != nil {
-			return nil, err
-		}
-		out = append(out, c)
-	}
-	return out, rows.Err()
-}
-
-// GetContainerInfo returns a single container by ID.
-func GetContainerInfo(db *sql.DB, id string) (*ContainerInfo, error) {
-	c := &ContainerInfo{}
-	err := db.QueryRow(`
-		SELECT id, name, image, status, COALESCE(state,'') as state, health,
-		       COALESCE(ports,'') as ports, COALESCE(created_at, datetime('now')) as created_at,
-		       COALESCE(last_updated, datetime('now')) as updated_at
-		FROM containers WHERE id = ?`, id,
-	).Scan(&c.ID, &c.Name, &c.Image, &c.Status, &c.State,
-		&c.Health, &c.Ports, &c.CreatedAt, &c.UpdatedAt)
-	if err == sql.ErrNoRows {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	return c, nil
-}
 
 // CountContainersByState returns (total, running, stopped, unhealthy) counts.
 func CountContainersByState(db *sql.DB) (total, running, stopped, unhealthy int, err error) {
@@ -291,17 +64,17 @@ func isContainerRunning(status string) bool {
 }
 
 // ---------------------------------------------------------------------------
-// Container metric queries.
+// Container metric queries for the API layer.
 // ---------------------------------------------------------------------------
 
 // ContainerMetricPoint is the API response type for container metric history.
 type ContainerMetricPoint struct {
-	ID            int64     `json:"id,omitempty"`
-	ContainerID   string    `json:"container_id"`
-	CPUPercent    float64   `json:"cpu_percent"`
-	MemPercent    float64   `json:"mem_percent"`
-	MemUsageMB    float64   `json:"mem_usage_mb"`
-	Timestamp     time.Time `json:"timestamp"`
+	ID          int64     `json:"id,omitempty"`
+	ContainerID string    `json:"container_id"`
+	CPUPercent  float64   `json:"cpu_percent"`
+	MemPercent  float64   `json:"mem_percent"`
+	MemUsageMB  float64   `json:"mem_usage_mb"`
+	Timestamp   time.Time `json:"timestamp"`
 }
 
 // GetContainerMetricsRange returns container metrics between from and to
@@ -374,8 +147,22 @@ func scanContainerMetricPoints(rows *sql.Rows) ([]ContainerMetricPoint, error) {
 }
 
 // ---------------------------------------------------------------------------
-// Login event queries (login_events table).
+// Login event queries (logins table).
 // ---------------------------------------------------------------------------
+
+// LoginEvent is the type used by the logins table.
+type LoginEvent struct {
+	ID         int64     `json:"id,omitempty"`
+	EventType  string    `json:"event_type"`
+	Username   string    `json:"username"`
+	IP         string    `json:"ip"`
+	Method     string    `json:"method"`
+	Attempts   int       `json:"attempts"`
+	GeoCountry string    `json:"country"`
+	GeoCity    string    `json:"city"`
+	GeoISP     string    `json:"isp"`
+	Timestamp  time.Time `json:"timestamp"`
+}
 
 // ListLoginEvents returns paginated login events with filters.
 func ListLoginEvents(db *sql.DB, eventType, ip string, page, perPage int) ([]LoginEvent, int, error) {
@@ -398,13 +185,14 @@ func ListLoginEvents(db *sql.DB, eventType, ip string, page, perPage int) ([]Log
 	}
 
 	var total int
-	if err := db.QueryRow("SELECT COUNT(*) FROM login_events"+where, args...).Scan(&total); err != nil {
+	if err := db.QueryRow("SELECT COUNT(*) FROM logins"+where, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 
 	offset := (page - 1) * perPage
-	q := `SELECT id, event_type, username, ip, port, method, country, city, created_at
-	      FROM login_events` + where + ` ORDER BY created_at DESC LIMIT ? OFFSET ?`
+	q := `SELECT id, event_type, username, ip, method, attempts,
+	             geo_country, geo_city, geo_isp, timestamp
+	      FROM logins` + where + ` ORDER BY timestamp DESC LIMIT ? OFFSET ?`
 	rowArgs := make([]interface{}, len(args))
 	copy(rowArgs, args)
 	rowArgs = append(rowArgs, perPage, offset)
@@ -418,8 +206,8 @@ func ListLoginEvents(db *sql.DB, eventType, ip string, page, perPage int) ([]Log
 	var out []LoginEvent
 	for rows.Next() {
 		var e LoginEvent
-		if err := rows.Scan(&e.ID, &e.EventType, &e.Username, &e.IP, &e.Port,
-			&e.Method, &e.Country, &e.City, &e.CreatedAt); err != nil {
+		if err := rows.Scan(&e.ID, &e.EventType, &e.Username, &e.IP, &e.Method,
+			&e.Attempts, &e.GeoCountry, &e.GeoCity, &e.GeoISP, &e.Timestamp); err != nil {
 			return nil, 0, err
 		}
 		out = append(out, e)
@@ -442,11 +230,11 @@ type IPCountStat struct {
 	Country string `json:"country"`
 }
 
-// GetLoginEventStats returns aggregate stats from the login_events table.
+// GetLoginEventStats returns aggregate stats from the logins table.
 func GetLoginEventStats(db *sql.DB) (*LoginEventStats, error) {
 	stats := &LoginEventStats{CountByType: make(map[string]int)}
 
-	typeRows, err := db.Query(`SELECT event_type, COUNT(*) FROM login_events GROUP BY event_type`)
+	typeRows, err := db.Query(`SELECT event_type, COUNT(*) FROM logins GROUP BY event_type`)
 	if err != nil {
 		return nil, err
 	}
@@ -464,8 +252,8 @@ func GetLoginEventStats(db *sql.DB) (*LoginEventStats, error) {
 	}
 
 	ipRows, err := db.Query(`
-		SELECT ip, COUNT(*) AS cnt, COALESCE(country, '') AS country
-		FROM login_events WHERE event_type IN ('login_fail', 'LOGIN_FAIL')
+		SELECT ip, COUNT(*) AS cnt, COALESCE(geo_country, '') AS country
+		FROM logins WHERE event_type IN ('login_fail', 'LOGIN_FAIL')
 		GROUP BY ip ORDER BY cnt DESC LIMIT 10`)
 	if err != nil {
 		return nil, err
@@ -484,17 +272,17 @@ func GetLoginEventStats(db *sql.DB) (*LoginEventStats, error) {
 
 	today := time.Now().UTC().Truncate(24 * time.Hour)
 	yesterday := today.Add(-24 * time.Hour)
-	_ = db.QueryRow(`SELECT COUNT(*) FROM login_events WHERE created_at >= ?`, today).Scan(&stats.TodayCount)
-	_ = db.QueryRow(`SELECT COUNT(*) FROM login_events WHERE created_at >= ? AND created_at < ?`,
+	_ = db.QueryRow(`SELECT COUNT(*) FROM logins WHERE timestamp >= ?`, today).Scan(&stats.TodayCount)
+	_ = db.QueryRow(`SELECT COUNT(*) FROM logins WHERE timestamp >= ? AND timestamp < ?`,
 		yesterday, today).Scan(&stats.YesterdayCount)
 
 	return stats, nil
 }
 
-// CountRecentLoginEvents returns the count of login_events since the given time.
+// CountRecentLoginEvents returns the count of logins since the given time.
 func CountRecentLoginEvents(db *sql.DB, since time.Time) (int, error) {
 	var c int
-	err := db.QueryRow(`SELECT COUNT(*) FROM login_events WHERE created_at >= ?`, since.UTC()).Scan(&c)
+	err := db.QueryRow(`SELECT COUNT(*) FROM logins WHERE timestamp >= ?`, since.UTC()).Scan(&c)
 	return c, err
 }
 

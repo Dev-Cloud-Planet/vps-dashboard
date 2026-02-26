@@ -2,7 +2,7 @@ import type { AuthTokenResponse } from "./types";
 
 const TOKEN_KEY = "vps_dashboard_token";
 const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080/api";
+  (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080") + "/api";
 
 /**
  * Get the auth token from localStorage.
@@ -44,7 +44,7 @@ export async function login(
   username: string,
   password: string
 ): Promise<AuthTokenResponse> {
-  const response = await fetch(`${API_BASE_URL}/login`, {
+  const response = await fetch(`${API_BASE_URL}/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ username, password }),

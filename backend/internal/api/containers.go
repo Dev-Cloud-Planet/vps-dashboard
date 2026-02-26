@@ -21,13 +21,19 @@ func (h *ContainersHandler) List(w http.ResponseWriter, r *http.Request) {
 	status := r.URL.Query().Get("status")
 	search := r.URL.Query().Get("search")
 
-	containers, err := models.ListContainerInfos(h.DB, status, search)
+	// Combine status and search into a single filter for ListContainers.
+	filter := search
+	if status != "" && filter == "" {
+		filter = status
+	}
+
+	containers, err := models.ListContainers(h.DB, filter)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "could not list containers")
 		return
 	}
 	if containers == nil {
-		containers = []models.ContainerInfo{}
+		containers = []models.Container{}
 	}
 
 	respondJSON(w, http.StatusOK, map[string]interface{}{
@@ -45,7 +51,7 @@ func (h *ContainersHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	container, err := models.GetContainerInfo(h.DB, id)
+	container, err := models.GetContainer(h.DB, id)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "could not fetch container")
 		return

@@ -101,35 +101,48 @@ export interface PortStatus {
 }
 
 export interface OverviewData {
-  metrics: SystemMetrics;
+  cpu_percent: number;
+  memory_percent: number;
+  disk_percent: number;
+  load_avg_1: number;
+  load_avg_5: number;
+  load_avg_15: number;
   containers_total: number;
   containers_running: number;
   containers_stopped: number;
   containers_unhealthy: number;
-  alerts_24h: number;
-  logins_24h: number;
+  recent_alerts: number;
+  recent_logins: number;
   uptime_seconds: number;
-  active_sessions: number;
+  active_ssh_sessions: number;
 }
 
 export interface LoginStats {
-  total: number;
-  success: number;
-  failed: number;
-  unique_ips: number;
-  top_ips: { ip: string; count: number; country: string }[];
-  by_type: { type: string; count: number }[];
+  count_by_type: Record<string, number>;
+  top_attacking_ips: { ip: string; count: number; country: string }[];
+  today_count: number;
+  yesterday_count: number;
 }
 
 export interface AlertStats {
-  total: number;
-  by_type: { type: string; count: number }[];
-  by_status: { status: string; count: number }[];
+  count_by_type: Record<string, number>;
+  count_by_status: Record<string, number>;
+  last_24h: number;
+  last_7d: number;
+  last_30d: number;
+}
+
+export interface MetricsHistoryResponse {
+  range: string;
+  from: string;
+  to: string;
+  points: number;
+  data: SystemMetrics[];
 }
 
 // WebSocket message types
 export type WSMessageType =
-  | "metrics"
+  | "system_metrics"
   | "containers"
   | "login_event"
   | "alert"

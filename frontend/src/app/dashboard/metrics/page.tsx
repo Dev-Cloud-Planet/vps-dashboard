@@ -97,13 +97,13 @@ function ChartTooltip({
 export default function MetricsPage() {
   const [range, setRange] = useState("24h");
 
-  const { data: metricsHistory, isLoading } = useSWR<SystemMetrics[]>(
+  const { data: metricsResp, isLoading } = useSWR<{ data: SystemMetrics[]; points: number }>(
     `/metrics/history?range=${range}`,
     swrFetcher,
     { refreshInterval: range === "1h" ? 10000 : 60000 }
   );
 
-  const data = metricsHistory ?? [];
+  const data = metricsResp?.data ?? [];
 
   return (
     <div className="space-y-6">

@@ -25,14 +25,14 @@ func (h *OverviewHandler) GetOverview(w http.ResponseWriter, r *http.Request) {
 	ov := models.Overview{}
 
 	// Latest system metrics.
-	metric, err := models.GetLatestSystemMetric(h.DB)
+	metric, err := models.GetLatestMetric(h.DB)
 	if err == nil && metric != nil {
 		ov.CPUPercent = metric.CPUPercent
-		ov.MemoryPercent = metric.MemoryPercent
+		ov.MemoryPercent = metric.RAMPercent
 		ov.DiskPercent = metric.DiskPercent
-		ov.LoadAvg1 = metric.LoadAvg1
-		ov.LoadAvg5 = metric.LoadAvg5
-		ov.LoadAvg15 = metric.LoadAvg15
+		ov.LoadAvg1 = metric.Load1m
+		ov.LoadAvg5 = metric.Load5m
+		ov.LoadAvg15 = metric.Load15m
 	}
 
 	// Container counts.
@@ -81,23 +81,12 @@ func readUptime() float64 {
 	return uptime
 }
 
-// countSSHSessions counts active SSH sessions by parsing the output-style of
-// /var/run/utmp or, as a more portable fallback, reading /proc for sshd
-// child processes. We use a simple approach: count lines in `who` output
-// by reading /var/run/utmp entries (binary), or fall back to /proc scanning.
+// countSSHSessions counts active SSH sessions.
 func countSSHSessions() int {
-	// Try reading /var/run/utmp lines. A simpler heuristic: count pts/ entries
-	// in /var/run/utmp. Since utmp is binary, we'll use /proc instead.
 	return countSSHFromProc()
 }
 
-// countSSHFromProc counts unique pts sessions by scanning /proc/[pid]/stat
-// for sshd child processes. A more reliable method: read
-// /var/run/utmp or parse `who` output style from /proc/net.
-// Simplest approach: count pseudo-terminal slave devices in /dev/pts.
 func countSSHFromProc() int {
-	// Count entries in /dev/pts/ (each represents a terminal session).
-	// Subtract 1 for ptmx if present.
 	entries, err := os.ReadDir("/dev/pts")
 	if err != nil {
 		return 0
@@ -111,8 +100,6 @@ func countSSHFromProc() int {
 		count++
 	}
 
-	// As a better heuristic, try to find sshd processes in /proc.
-	// Look for processes whose cmdline contains "sshd:" (session processes).
 	sshCount := countSSHProcesses()
 	if sshCount > 0 {
 		return sshCount
@@ -121,7 +108,6 @@ func countSSHFromProc() int {
 	return count
 }
 
-// countSSHProcesses scans /proc for sshd session processes.
 func countSSHProcesses() int {
 	entries, err := os.ReadDir("/proc")
 	if err != nil {
@@ -133,7 +119,6 @@ func countSSHProcesses() int {
 		if !e.IsDir() {
 			continue
 		}
-		// Only check numeric (PID) directories.
 		if _, err := strconv.Atoi(e.Name()); err != nil {
 			continue
 		}
@@ -147,7 +132,6 @@ func countSSHProcesses() int {
 		line := scanner.Text()
 		f.Close()
 
-		// sshd session processes have cmdlines like "sshd: user@pts/0"
 		if strings.Contains(line, "sshd:") && strings.Contains(line, "@") {
 			count++
 		}

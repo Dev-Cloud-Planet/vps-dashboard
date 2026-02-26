@@ -54,13 +54,20 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
       const msg: WSMessage = JSON.parse(event.data);
 
       switch (msg.type) {
-        case "metrics":
+        case "system_metrics":
           setLastMetrics(msg.data as SystemMetrics);
           break;
 
-        case "containers":
-          setLastContainers(msg.data as Container[]);
+        case "containers": {
+          // Backend sends {containers: [...], metrics: [...]}
+          const cdata = msg.data as { containers?: Container[]; metrics?: unknown } | Container[];
+          if (Array.isArray(cdata)) {
+            setLastContainers(cdata);
+          } else if (cdata && cdata.containers) {
+            setLastContainers(cdata.containers);
+          }
           break;
+        }
 
         case "login_event":
           setRecentLogins((prev) => {

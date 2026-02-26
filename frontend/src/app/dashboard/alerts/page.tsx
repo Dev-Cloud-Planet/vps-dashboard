@@ -99,12 +99,9 @@ export default function AlertsPage() {
     : 1;
 
   // Compute stats from API response or WS
-  const totalSent =
-    stats?.by_status?.find((s) => s.status === "sent")?.count ?? 0;
-  const totalFailed =
-    stats?.by_status?.find((s) => s.status === "failed")?.count ?? 0;
-  const totalRateLimited =
-    stats?.by_status?.find((s) => s.status === "rate_limited")?.count ?? 0;
+  const totalSent = stats?.count_by_status?.["sent"] ?? 0;
+  const totalFailed = stats?.count_by_status?.["failed"] ?? 0;
+  const totalRateLimited = stats?.count_by_status?.["rate_limited"] ?? 0;
 
   return (
     <div className="space-y-6">

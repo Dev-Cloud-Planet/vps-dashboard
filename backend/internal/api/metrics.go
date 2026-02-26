@@ -16,7 +16,7 @@ type MetricsHandler struct {
 // GetCurrent handles GET /api/metrics/current.
 // It returns the latest system metric snapshot.
 func (h *MetricsHandler) GetCurrent(w http.ResponseWriter, r *http.Request) {
-	metric, err := models.GetLatestSystemMetric(h.DB)
+	metric, err := models.GetLatestMetric(h.DB)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "could not fetch metrics")
 		return
@@ -30,13 +30,7 @@ func (h *MetricsHandler) GetCurrent(w http.ResponseWriter, r *http.Request) {
 
 // GetHistory handles GET /api/metrics/history?range=24h.
 // It returns historical metrics with automatic downsampling based on the
-// requested time range:
-//
-//	1h  -> raw data           (~360 points at 10s interval)
-//	6h  -> 1-min averages     (~360 points)
-//	24h -> 5-min averages     (~288 points)
-//	7d  -> 30-min averages    (~336 points)
-//	30d -> 2-hour averages    (~360 points)
+// requested time range.
 func (h *MetricsHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 	rangeStr := r.URL.Query().Get("range")
 	if rangeStr == "" {
@@ -46,13 +40,13 @@ func (h *MetricsHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC()
 	from, maxPoints := parseTimeRange(rangeStr, now)
 
-	metrics, err := models.GetSystemMetricsRange(h.DB, from, now, maxPoints)
+	metrics, err := models.GetMetricsRange(h.DB, from, now, maxPoints)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "could not fetch metrics history")
 		return
 	}
 	if metrics == nil {
-		metrics = []models.SystemMetric{}
+		metrics = []models.Metric{}
 	}
 
 	respondJSON(w, http.StatusOK, map[string]interface{}{
@@ -65,8 +59,7 @@ func (h *MetricsHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 }
 
 // parseTimeRange converts a range string into a start time and target number
-// of data points. These max-point values produce the desired downsampling
-// granularity given typical 10-second collection intervals.
+// of data points.
 func parseTimeRange(rangeStr string, now time.Time) (from time.Time, maxPoints int) {
 	switch rangeStr {
 	case "1h":
@@ -80,7 +73,6 @@ func parseTimeRange(rangeStr string, now time.Time) (from time.Time, maxPoints i
 	case "30d":
 		return now.Add(-30 * 24 * time.Hour), 360
 	default:
-		// Default to 24h.
 		return now.Add(-24 * time.Hour), 288
 	}
 }
